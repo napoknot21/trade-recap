@@ -61,7 +61,7 @@ def load_api_data (
 
     # Generation of dates to consider
     print("\n[*] Searching trades for following dates: \n")
-    dates = tm.generate_dates(date)
+    dates = tm.generate_dates(start_date)
     print(dates)
 
     # Api Invocation for  trades information
