@@ -190,64 +190,75 @@ def _parse_list_of_dicts (s : str) -> list[dict]:
     return out
 
 
+
 def manage_list_type_column_from_df(df: pl.DataFrame, column: str = "fields") -> pl.DataFrame:
     """
-
+    If `column` is:
+      - list[struct[code,value]]: explode/unnest/pivot to wide (fast, pure Polars).
+      - Utf8 (string/JSON): use your existing _parse_list_of_dicts, then recurse once.
+    Leaves your _parse_list_of_dicts untouched.
     """
     if df is None or df.is_empty() or column not in df.columns:
         return df
 
-    target_dtype = pl.List(pl.Struct([pl.Field("code", pl.Utf8), pl.Field("value", pl.Utf8)]))
+    col_dtype = dict(df.schema).get(column)
 
-    # Decode string column -> List[Struct{code:str, value:str}] using a Python UDF
-    # (works across Polars versions; small perf cost, but robust)
-    df2 = df.with_columns(
-        pl
-        .when(pl.col(column).is_null())
-        .then(pl.lit([], dtype=target_dtype))
-        .otherwise(
-            pl.col(column).map_elements(_parse_list_of_dicts, return_dtype=target_dtype)
+    # ---- Case A: already list[struct] -> pure Polars (avoid your parser entirely)
+    if isinstance(col_dtype, pl.List) and isinstance(col_dtype.inner, pl.Struct):
+        # nothing to widen?
+        if df.select(pl.col(column).list.len().sum()).item() == 0:
+            return df
+
+        base_cols = set(df.columns)
+
+        exploded = (
+            df.with_row_index("_rowid")
+              .explode(column)
+              .drop_nulls(column)    # drop rows with null list items
+              .unnest(column)        # becomes two columns (code,value)
         )
-        .alias(column)
-    )
 
-    # Nothing to widen
-    if df2.select(pl.col(column).list.len().sum()).item() == 0 :
-        return df2
+        # identify the two new columns created by unnest
+        new_cols = [c for c in exploded.columns if c not in base_cols and c != "_rowid"]
+        if len(new_cols) < 2:
+            return df  # nothing sensible to widen
 
-    # Explode -> pivot wide
-    exploded = (
+        code_col, value_col = new_cols[0], new_cols[1]
 
-        df2.with_row_index(name="_rowid")
-           .explode(column)
-           .drop_nulls(column)
-           .with_columns(
-               pl.col(column).struct.field("code").alias("code"),
-               pl.col(column).struct.field("value").alias("value"),
-           )
-           .select("_rowid", "code", "value")
-    
-    )
+        wide = (
+            exploded
+            .select("_rowid", code_col, value_col)
+            .with_columns(
+                pl.col(code_col).cast(pl.Utf8),
+                pl.col(value_col).cast(pl.Utf8),
+            )
+            .pivot(values=value_col, index="_rowid", on=code_col, aggregate_function="first")
+        )
 
-    if exploded.is_empty() :
-        return df2
+        out = (
+            df.with_row_index("_rowid")
+              .join(wide, on="_rowid", how="left")
+              .drop("_rowid")
+        )
 
-    wide = exploded.pivot(values="value", index="_rowid", on="code", aggregate_function="first")
+        created = [c for c in out.columns if c not in df.columns]
+        return out.rename({c: f"{column}.{c}" for c in created})
 
-    out = (
-        
-        df2
-        .with_row_count("_rowid")
-        .join(wide, on="_rowid", how="left")
-        .drop("_rowid")
-    
-    )
+    # ---- Case B: strings/JSON -> use your existing parser, then call this function once more
+    # We ONLY run this when the dtype is Utf8; this prevents passing Series to your parser.
+    if col_dtype == pl.Utf8:
+        target_dtype = pl.List(pl.Struct([pl.Field("code", pl.Utf8), pl.Field("value", pl.Utf8)]))
+        df2 = df.with_columns(
+            pl.when(pl.col(column).is_null())
+              .then(pl.lit([], dtype=target_dtype))
+              .otherwise(pl.col(column).map_elements(_parse_list_of_dicts, return_dtype=target_dtype))
+              .alias(column)
+        )
+        # Now column is list[struct]; run the fast path
+        return manage_list_type_column_from_df(df2, column)
 
-    # Prefix only newly created columns
-    new_cols = [c for c in out.columns if c not in df.columns]
-    
-    return out.rename({c: f"{column}.{c}" for c in new_cols})
-
+    # Any other dtype (e.g., already Struct, Binary, etc.) -> do nothing
+    return df
 
 def load_df_from_excel (file_basename : Optional[str]) -> Optional[pl.DataFrame] :
     """
@@ -269,7 +280,8 @@ books_excluded: List[str] = ['HV_BONDS_EXO', 'HV_EXO_EQUITY' 'HV_SMART_BETA']
 #df = rerun_api_call(books_excluded)
 
 # Loading information from file
-df = load_df_from_excel(FILE_BASENAME_EXCEL_SRC)
+
+df = load_api_data(excluded_books=books_excluded)
 print(df)
 
 print(df.select(["customFields", "fields", "instrument"]))
