@@ -512,6 +512,66 @@ def flatten_all_struct_like_columns_routed(
     
     return flatten_struct_like_columns_routed(df, cols, **kwargs)
 
+
+def save_df_timestamped_excel(
+        
+        df: pl.DataFrame,
+        base_dir: Optional[str] = None,
+        *,
+        base_name: str = "trade-recap",
+        stamp_fmt: str = "%Y_%m_%dT%H_%M",
+        tz: str = "Europe/Luxembourg",
+        verbose: bool = True,
+
+    ) -> str:
+    """
+    Save `df` to Excel with a timestamped filename:
+      <base_name>_<YYYY_MM_DDTHH_MM>.xlsx
+
+    Args:
+        df: Polars DataFrame to export.
+        base_dir: Directory to write the file into. If None, tries
+                  DIRECTORY_DATA_ABS_PATH, then falls back to "./data".
+        base_name: Prefix for the file name (default: "trade-recap").
+        stamp_fmt: strftime format for the timestamp (default: "%Y_%m_%dT%H_%M").
+        tz: IANA timezone for the timestamp (default: "Europe/Luxembourg").
+        verbose: Print the final path if True.
+
+    Returns:
+        Absolute path to the written Excel file.
+    """
+    # Resolve output directory
+    if base_dir is None:
+
+        try:
+            base_dir = DIRECTORY_DATA_ABS_PATH or "./data"  # uses your module-level var if present
+        
+        except NameError:
+            base_dir = "./data"
+
+    os.makedirs(base_dir, exist_ok=True)
+
+    # Build timestamp using desired timezone (fallback to local time)
+    try :
+
+        from zoneinfo import ZoneInfo
+        now = dt.datetime.now(ZoneInfo(tz))
+
+    except Exception :
+
+        now = dt.datetime.now()
+
+    stamp = now.strftime(stamp_fmt)
+    out_path = os.path.join(base_dir, f"{base_name}_{stamp}.xlsx")
+
+    # Write Excel
+    df.write_excel(out_path)
+
+    if verbose:
+        print(f"[+] Wrote Excel to: {out_path}")
+
+    return out_path
+
 # ================================ Main pipeline ===============================
 
 if __name__ == "__main__" :
@@ -519,7 +579,7 @@ if __name__ == "__main__" :
     # Example: exclude a few books
     books_excluded: List[str] = ["HV_BONDS_EXO", "HV_EXO_EQUITY", "HV_SMART_BETA"]
 
-    # Fetch via API
+    # Fetch via API (for today)
     df = load_api_data(excluded_books=books_excluded)
     print(df)
     
@@ -540,7 +600,7 @@ if __name__ == "__main__" :
 
     df = flatten_struct_like_columns_routed(
         df,
-        columns=["instrument", "pricing", "attributes"],  # roots to flatten
+        columns=["instrument", "premium", "settlement"],  # roots to flatten
         sep=SEP,
         parse_strings=True,
         infer_json_rows=None,        # let Polars infer over all rows (robust)
@@ -566,7 +626,4 @@ if __name__ == "__main__" :
     print(df)
 
     # Export to Excel
-    out_path = os.path.join("./data/", FILE_BASENAME_EXCEL_TARGET or "trade_recap.xlsx")
-    df.write_excel(out_path)
-    
-    print(f"[+] Wrote Excel to: {out_path}")
+    out_path = save_df_timestamped_excel(df, base_dir=DIRECTORY_DATA_ABS_PATH, base_name="trade-recap")
