@@ -14,6 +14,8 @@ from collections import deque
 from typing import List, Dict, Optional, Any, Iterable, Tuple
 from dotenv import load_dotenv
 
+#from .formatter import save_vertical_report_grouped_by_bank_trade
+
 load_dotenv()
 
 # ============================== Config / Globals ==============================
@@ -84,6 +86,34 @@ def _looks_jsonish_expr (col: pl.Expr) -> pl.Expr :
         | col.strip_chars().str.starts_with("[")
         | (col.str.contains(":") & (col.str.contains("{") | col.str.contains("[")))
     )
+
+
+def drop_struct_and_liststruct_columns (
+        
+        df: pl.DataFrame,
+        *,
+        verbose: bool = True,
+
+    ) -> pl.DataFrame:
+    """
+    Drop columns whose dtype is Struct or List[Struct].
+    Leaves everything else untouched.
+    """
+    if df is None or df.is_empty():
+        return df
+
+    to_drop: List[str] = []
+    for name, dtype in df.schema.items():
+        if isinstance(dtype, pl.Struct):
+            to_drop.append(name)
+        elif isinstance(dtype, pl.List) and isinstance(dtype.inner, pl.Struct):
+            to_drop.append(name)
+
+    if verbose and to_drop:
+        print(f"[*] Dropping Struct/List[Struct] columns: {to_drop}")
+
+    return df.drop(to_drop) if to_drop else df
+
 
 # ============================== API → DataFrame ===============================
 
@@ -572,6 +602,304 @@ def save_df_timestamped_excel(
 
     return out_path
 
+
+def _split_levels_for_plan(col: str, *, sep: str, max_levels: int, general_label: str) -> tuple[list[str], str]:
+    """
+    Return ([L1..Lmax], field) for a column path.
+    - No dot => treat as General Information; levels[0]=general_label, the rest empty; field=col
+    - Dotted => levels are all tokens except the last; padded/truncated to exactly `max_levels`; field=last token.
+    """
+    if sep not in col:
+        levels = [general_label] + [""] * (max_levels - 1)
+        return levels, col
+    parts = col.split(sep)
+    field = parts[-1]
+    mids = parts[:-1]
+    levels = (mids + [""] * max_levels)[:max_levels]
+    return levels, field
+
+
+def _max_levels_before_field(df: pl.DataFrame, *, sep: str, exclude_cols: set[str]) -> int:
+    """
+    Compute the maximum number of level tokens (before Field) among all *scalar* columns.
+    Struct/List columns are ignored. Excluded id columns are ignored.
+    """
+    max_lv = 1
+    for name, dt in df.schema.items():
+        if name in exclude_cols:
+            continue
+        if isinstance(dt, (pl.Struct, pl.List)):
+            continue
+        if sep in name:
+            lv = max(1, len(name.split(sep)) - 1)
+        else:
+            lv = 1
+        if lv > max_lv:
+            max_lv = lv
+    return max_lv
+
+
+def _is_identifier_col(name: str) -> bool:
+    """
+    Heuristic: treat values for this column as identifiers (text), not numbers.
+    - last token ends with 'id' (case-insensitive), or equals 'id'
+    - contains 'externalid'
+    - explicit trade id names
+    """
+    nlow = name.lower()
+    last = nlow.rsplit(".", 1)[-1]
+    return (
+        last == "id"
+        or last.endswith("id")
+        or "externalid" in nlow
+        or "tradeid" in nlow
+        or "tradelegid" in nlow
+    )
+
+
+def save_vertical_trade_report_by_counterparty_dynamic_levels(
+        df: pl.DataFrame,
+        out_path: str,
+        *,
+        sep: str = ".",
+        counterparty_col: str = "counterparty",
+        trade_id_col: str = "tradeId",
+        leg_id_col: str = "tradeLegId",
+        general_section_name: str = "General Information",
+        header_height_rows: int = 3,          # row0=Bank, row1=TradeId, row2=TradeLegId
+) -> str:
+    """
+    Vertical report with dynamic L1..Lk + Field label block and modern styling.
+    - Groups columns to the right by: Bank (row 0), TradeId (row 1), TradeLegId (row 2).
+    - Left label block shows L1..Lk and Field, with proper vertical + horizontal merges.
+    - All dot tokens (incl. numbers) are levels; the last token is the Field.
+    - ID-like values render as TEXT (no scientific notation).
+
+    Returns:
+        out_path
+    """
+    import xlsxwriter
+    from collections import deque
+
+    if df is None or df.is_empty():
+        raise ValueError("DataFrame is empty.")
+
+    # ---------- Build header structure (banks → tradeIds → tradeLegIds) ----------
+    # Banks
+    banks = (
+        df.select(pl.col(counterparty_col).cast(pl.Utf8))
+          .unique()
+          .to_series()
+          .to_list()
+    )
+    # Sort with None last
+    banks = sorted(banks, key=lambda x: (x is None, "" if x is None else str(x)))
+
+    # TradeIds per bank (keep None, show as '—')
+    trade_ids_by_bank: dict[Any, list[Any]] = {}
+    legs_by_bank_tid: dict[tuple[Any, Any], list[Any]] = {}
+    for bk in banks:
+        tids = (
+            df.filter(pl.col(counterparty_col) == bk)
+              .select(pl.col(trade_id_col))
+              .unique()
+              .to_series()
+              .to_list()
+        )
+        tids = sorted(tids, key=lambda x: (x is None, x))
+        trade_ids_by_bank[bk] = tids
+        for tid in tids:
+            legs = (
+                df.filter((pl.col(counterparty_col) == bk) & (pl.col(trade_id_col) == tid))
+                  .select(pl.col(leg_id_col))
+                  .unique()
+                  .to_series()
+                  .to_list()
+            )
+            legs = sorted(legs, key=lambda x: (x is None, x))
+            # If there is a leg with no tradeId at all, it will appear under tid=None
+            legs_by_bank_tid[(bk, tid)] = legs
+
+    # ---------- Determine dynamic label depth Lmax ----------
+    exclude_cols = {counterparty_col, trade_id_col, leg_id_col}
+
+    def _max_levels_before_field_local(df_: pl.DataFrame, *, sep_: str, exclude_cols_: set[str]) -> int:
+        max_lv = 1
+        for name, dt in df_.schema.items():
+            if name in exclude_cols_:
+                continue
+            if isinstance(dt, (pl.Struct, pl.List)):
+                continue
+            lv = (len(name.split(sep_)) - 1) if sep_ in name else 1
+            if lv < 1:
+                lv = 1
+            if lv > max_lv:
+                max_lv = lv
+        return max_lv
+
+    max_levels = _max_levels_before_field_local(df, sep_=sep, exclude_cols_=exclude_cols)
+    label_cols_count = max_levels + 1          # L1..Lk + Field
+    field_col_idx = label_cols_count - 1
+    first_value_col = label_cols_count
+
+    # ---------- Choose scalar columns for the left block ----------
+    scalar_cols = [
+        name for name, dt in df.schema.items()
+        if name not in exclude_cols and not isinstance(dt, (pl.Struct, pl.List))
+    ]
+
+    def _split_levels_for_plan_local(col: str, *, sep_: str, max_lv: int, general_label: str) -> tuple[list[str], str]:
+        if sep_ not in col:
+            levels = [general_label] + [""] * (max_lv - 1)
+            return levels, col
+        parts = col.split(sep_)
+        field = parts[-1]
+        mids = parts[:-1]
+        levels = (mids + [""] * max_lv)[:max_lv]
+        return levels, field
+
+    general = []
+    namespaced = []
+    for col in scalar_cols:
+        lv, fld = _split_levels_for_plan_local(col, sep_=sep, max_lv=max_levels, general_label=general_section_name)
+        if sep in col:
+            namespaced.append((lv, fld, col))
+        else:
+            general.append((lv, fld, col))
+
+    general.sort(key=lambda t: t[1])
+    namespaced.sort(key=lambda t: (t[0], t[1]))
+    rows_plan = general + namespaced
+
+    # ---------- Value lookup: (bank, tid, leg) -> record ----------
+    row_by_key: dict[tuple[Any, Any, Any], dict[str, Any]] = {}
+    for rec in df.to_dicts():
+        key = (rec.get(counterparty_col), rec.get(trade_id_col), rec.get(leg_id_col))
+        if key not in row_by_key:
+            row_by_key[key] = rec
+
+    # For quick text-format decision per row
+    id_like_cols = {full for (_, _, full) in rows_plan if _is_identifier_col(full)}
+
+    # ---------- Workbook / formats (modern palette) ----------
+    wb = xlsxwriter.Workbook(out_path)
+    ws = wb.add_worksheet("Report")
+
+    # Headers (dark slate → light)
+    fmt_header_bank = wb.add_format({"bold": True, "align": "center", "valign": "vcenter",
+                                     "border": 1, "bg_color": "#0F172A", "font_color": "#FFFFFF"})
+    fmt_header_tid  = wb.add_format({"bold": True, "align": "center", "valign": "vcenter",
+                                     "border": 1, "bg_color": "#1F2937", "font_color": "#FFFFFF"})
+    fmt_header_leg  = wb.add_format({"bold": True, "align": "center", "valign": "vcenter",
+                                     "border": 1, "bg_color": "#374151", "font_color": "#FFFFFF"})
+
+    # Label block
+    fmt_level       = wb.add_format({"bold": True,  "align": "center", "valign": "vcenter",
+                                     "border": 1, "bg_color": "#F3F4F6"})   # gray-100
+    fmt_field       = wb.add_format({"bold": True,  "align": "left",   "valign": "vcenter",
+                                     "border": 1, "bg_color": "#EEF2FF"})   # indigo-50
+
+    # Values
+    fmt_value_num   = wb.add_format({"align": "right", "valign": "vcenter", "border": 1})
+    fmt_value_txt   = wb.add_format({"align": "right", "valign": "vcenter", "border": 1, "num_format": "@"})
+    fmt_missing     = wb.add_format({"align": "center", "valign": "vcenter", "border": 1, "font_color": "#9CA3AF"})
+
+    # Column widths + header rows
+    for c in range(0, field_col_idx):
+        ws.set_column(c, c, 16)
+    ws.set_column(field_col_idx, field_col_idx, 24)
+    ws.set_row(0, 20); ws.set_row(1, 20); ws.set_row(2, 20)
+
+    # ---------- Top-left label headers: merge vertically "L1..Lk" and "Field" ----------
+    for lvl_idx in range(max_levels):
+        ws.merge_range(0, lvl_idx, header_height_rows - 1, lvl_idx, f"L{lvl_idx+1}", fmt_level)
+    ws.merge_range(0, field_col_idx, header_height_rows - 1, field_col_idx, "Field", fmt_field)
+
+    # ---------- Build right header (banks / tradeIds / tradeLegIds) ----------
+    col_map: dict[tuple[Any, Any, Any], int] = {}
+    c = first_value_col
+
+    for bank in banks:
+        c_bank_start = c
+        tids = trade_ids_by_bank.get(bank, [])
+        for tid in tids:
+            legs = legs_by_bank_tid.get((bank, tid), [])
+            if not legs:
+                continue
+            c_tid_start = c
+            for leg in legs:
+                col_map[(bank, tid, leg)] = c
+                # force text for leg ids
+                ws.write_string(2, c, "" if leg is None else str(leg), fmt_header_leg)
+                c += 1
+            # text for TradeId
+            tid_label = "—" if tid is None else str(tid)
+            ws.merge_range(1, c_tid_start, 1, c - 1, tid_label, fmt_header_tid)
+        if c > c_bank_start:
+            bank_label = "—" if bank is None else str(bank)
+            ws.merge_range(0, c_bank_start, 0, c - 1, bank_label, fmt_header_bank)
+
+    # ---------- Left label rows (we’ll merge levels after writing placeholders) ----------
+    start_row = header_height_rows
+    r = start_row
+    for levels, field, _full in rows_plan:
+        for lvl_idx in range(max_levels):
+            ws.write(r, lvl_idx, "", fmt_level)
+        ws.write(r, field_col_idx, field, fmt_field)
+        r += 1
+    last_row = r - 1
+
+    # ---------- Merge level labels (vertical; and horizontal if no deeper sublevels) ----------
+    def deeper_nonempty(run_start: int, run_end: int, lvl_idx: int) -> bool:
+        for rr in range(run_start, run_end + 1):
+            lv = rows_plan[rr - start_row][0]
+            if any(x for x in lv[lvl_idx + 1:]):
+                return True
+        return False
+
+    for lvl_idx in range(max_levels):
+        r0 = start_row
+        curr = rows_plan[0][0][lvl_idx] if rows_plan else ""
+        for rr in range(start_row, last_row + 2):  # sentinel
+            val = rows_plan[rr - start_row][0][lvl_idx] if rr <= last_row else None
+            if val != curr:
+                if curr:
+                    r_end = rr - 1
+                    if deeper_nonempty(r0, r_end, lvl_idx):
+                        c0, c1 = lvl_idx, lvl_idx
+                    else:
+                        c0, c1 = lvl_idx, field_col_idx - 1
+                    ws.merge_range(r0, c0, r_end, c1, curr, fmt_level)
+                r0 = rr
+                curr = val
+
+    # ---------- Write values ----------
+    r = start_row
+    for _levels, _field, full_col in rows_plan:
+        write_as_text = _is_identifier_col(full_col)
+        for (bank, tid, leg), cc in col_map.items():
+            rec = row_by_key.get((bank, tid, leg))
+            if rec is None:
+                ws.write(r, cc, "—", fmt_missing)
+            else:
+                val = rec.get(full_col, None)
+                if val is None:
+                    ws.write(r, cc, "—", fmt_missing)
+                else:
+                    if write_as_text:
+                        ws.write_string(r, cc, str(val), fmt_value_txt)
+                    else:
+                        # keep numeric types numeric; strings stay strings
+                        if isinstance(val, (int, float)):
+                            ws.write_number(r, cc, float(val), fmt_value_num)
+                        else:
+                            ws.write(r, cc, str(val), fmt_value_txt if isinstance(val, str) else fmt_value_num)
+        r += 1
+
+    wb.close()
+    return out_path
+
+
 # ================================ Main pipeline ===============================
 
 if __name__ == "__main__" :
@@ -580,7 +908,7 @@ if __name__ == "__main__" :
     books_excluded: List[str] = ["HV_BONDS_EXO", "HV_EXO_EQUITY", "HV_SMART_BETA"]
 
     # Fetch via API (for today)
-    df = load_api_data(excluded_books=books_excluded)
+    df = load_api_data("2025-09-18", excluded_books=books_excluded)
     print(df)
     
     # fields/customFields → wide columns
@@ -625,5 +953,23 @@ if __name__ == "__main__" :
 
     print(df)
 
-    # Export to Excel
+    # … after flatten/casts
+    df =drop_struct_and_liststruct_columns(df, verbose=True)
+
+    print(df)
+
+    print(df.columns)
+    print()
+    # Export to Excel (wide, raw columns)
     out_path = save_df_timestamped_excel(df, base_dir=DIRECTORY_DATA_ABS_PATH, base_name="trade-recap")
+
+    out_path_vertical = save_vertical_trade_report_by_counterparty_dynamic_levels(
+        df,
+        out_path=os.path.join(DIRECTORY_DATA_ABS_PATH or "./data", "trade-recap_vertical.xlsx"),
+        sep=".",
+        counterparty_col="counterparty",
+        trade_id_col="tradeId",
+        leg_id_col="tradeLegId",
+        general_section_name="General Information",
+    )
+    print("[+] Wrote vertical report to:", out_path_vertical)
