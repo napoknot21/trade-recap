@@ -1,4 +1,5 @@
 polars
 fastexcel
 dotenv
+xlsxwriter
 pyarrow
