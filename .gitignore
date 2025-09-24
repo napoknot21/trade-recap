@@ -7,3 +7,4 @@ lib64
 pyvenv.cfg
 .env
 *.ps1
+data

@@ -9,7 +9,7 @@ import datetime as dt
 from zoneinfo import ZoneInfo
 from typing import Optional, Any , Dict, Tuple, List
 
-from src.config import DIRECTORY_DATA_ABS_PATH
+from src.config import RECAP_DATA_ABS_DIR
 from src.utils import is_identifier_col, max_levels_before_field, split_levels_for_plan
 
 
@@ -788,11 +788,10 @@ def write_vertical_sheet(
     header_height_rows: int = 3,
 ) -> None:
     """
-    Render ONE vertical report sheet into an existing xlsxwriter worksheet `ws`,
-    using the same layout/rules as save_vertical_trade_report_by_counterparty_dynamic_levels.
+    Render ONE vertical report into worksheet `ws` using the SAME layout/colors/grouping
+    as save_vertical_trade_report_by_counterparty_dynamic_levels.
     """
     if df is None or df.is_empty():
-        # Write a small message, keep it graceful
         ws.write(0, 0, "No data for this selection.")
         return
 
@@ -829,7 +828,7 @@ def write_vertical_sheet(
         fmt_field=formats["field"],
     )
 
-    # 5) right headers (banks / tradeIds / legs)
+    # 5) right headers
     col_map = write_headers(
         ws,
         formats,
@@ -841,7 +840,7 @@ def write_vertical_sheet(
         first_value_col=first_value_col,
     )
 
-    # 6) left label block + big GI rectangle
+    # 6) left label block + GI rectangle
     start_row, last_row, general_end = write_label_block(
         ws,
         formats,
@@ -852,7 +851,7 @@ def write_vertical_sheet(
         general_section_name=general_section_name,
     )
 
-    # 7) merge remaining level labels AFTER the GI rectangle
+    # 7) merge remaining level labels AFTER GI rectangle
     merge_start = max(general_end + 1, start_row)
     merge_level_labels(
         ws,
@@ -877,7 +876,6 @@ def write_vertical_sheet(
 
 
 
-
 def save_vertical_split_by_originating_action(
     df: pl.DataFrame,
     out_path: str,
@@ -894,31 +892,28 @@ def save_vertical_split_by_originating_action(
     header_height_rows: int = 3,
 ) -> str:
     """
-    Create one workbook with TWO vertical sheets:
-      - trading_sheet_name: rows where originatingAction ∈ report_actions
-      - lifecycle_sheet_name: all remaining rows (including null/missing)
-    Layout matches your vertical report.
+    Create ONE workbook with TWO vertical sheets (same layout/colors/grouping):
+      - trading_sheet_name: originatingAction ∈ report_actions
+      - lifecycle_sheet_name: all the rest (including nulls)
     """
     import xlsxwriter
 
     if df is None or df.is_empty():
         raise ValueError("DataFrame is empty.")
 
-    # Split once (no DF mutation)
     if action_col in df.columns:
         mask = pl.col(action_col).is_in(list(report_actions))
         df_trading = df.filter(mask)
         df_lifecycle = df.filter(~mask | pl.col(action_col).is_null())
     else:
-        # If the column doesn't exist, put everything under LifeCycle, Trading empty
-        df_trading = pl.DataFrame(schema=df.schema)
+        df_trading = pl.DataFrame(schema=df.schema)  # empty but same schema
         df_lifecycle = df
 
     wb = xlsxwriter.Workbook(out_path)
     try:
         formats = create_formats(wb)
 
-        # Sheet 1: Trading Report (vertical)
+        # Sheet 1: Trading Report (VERTICAL)
         ws_trading = wb.add_worksheet(trading_sheet_name)
         write_vertical_sheet(
             df_trading,
@@ -932,7 +927,7 @@ def save_vertical_split_by_originating_action(
             header_height_rows=header_height_rows,
         )
 
-        # Sheet 2: LifeCycle Report (vertical)
+        # Sheet 2: LifeCycle Report (VERTICAL)
         ws_lifecycle = wb.add_worksheet(lifecycle_sheet_name)
         write_vertical_sheet(
             df_lifecycle,

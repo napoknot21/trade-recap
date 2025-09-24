@@ -5,16 +5,17 @@ import sys
 import json
 import argparse
 import polars as pl
+import datetime as dt
 
 from typing import List, Dict, Any, Tuple
 
-from src.config import DIRECTORY_DATA_ABS_PATH, SEP
+from src.config import RECAP_DATA_ABS_DIR, SEP
 from src.api import load_api_data
 from src.fields import manage_list_type_column_from_df
 from src.flatten import flatten_struct_like_columns_routed
 from src.utils import drop_struct_and_liststruct_columns
-from src.excel import save_df_timestamped_excel, save_vertical_trade_report_by_counterparty_dynamic_levels, save_wide_report_split_by_originating_action
-
+from src.excel import save_df_timestamped_excel, save_vertical_trade_report_by_counterparty_dynamic_levels, save_vertical_split_by_originating_action
+from src.outlook import create_email_item, save_email_item
 
 def parse_args (argv: List[str] | None = None) -> argparse.Namespace:
     """
@@ -48,6 +49,16 @@ def parse_args (argv: List[str] | None = None) -> argparse.Namespace:
         "--sheet-name", default="Report",
         help="Sheet name for the vertical report (default: Report)."
     )
+    p.add_argument(
+        "--no-draft", action="store_true",
+        help="Do not open an Outlook draft after saving reports."
+    )
+    # Optional: override email subject
+    p.add_argument(
+        "--subject", default=None,
+        help="Override email subject. Default includes the run date."
+    )
+
     return p.parse_args(argv)
 
 
@@ -127,7 +138,7 @@ def run (argv: List[str] | None = None) -> None :
     """
     args = parse_args(argv)
 
-    base_dir = args.base_dir or DIRECTORY_DATA_ABS_PATH or "./data"
+    base_dir = args.base_dir or RECAP_DATA_ABS_DIR or "./data"
     os.makedirs(base_dir, exist_ok=True)
     
     print(f"[*] Output directory: {base_dir}")
@@ -181,25 +192,72 @@ def run (argv: List[str] | None = None) -> None :
         vertical_path = os.path.join(base_dir, "trade-recap_vertical.xlsx")
         # The report function uses its own palette and layout; no sheet-name param needed here,
         # but you can add it to the function if you want per-CLI control.
-        
+        """
         vertical_path = save_vertical_trade_report_by_counterparty_dynamic_levels(df, out_path=vertical_path, sep=".",
                                                                                   counterparty_col="counterparty", trade_id_col="tradeId",
                                                                                   leg_id_col="tradeLegId", general_section_name="General Information"
                                                                                   )
         """
-        vertical_path = save_wide_report_split_by_originating_action(
+        vertical_path = save_vertical_split_by_originating_action(
             df,
             out_path=vertical_path,
             action_col="originatingAction",
             report_actions=("New", "Early Termination"),
+            trading_sheet_name="Trading Report",
+            lifecycle_sheet_name="LifeCycle Report",
 
         )
-        """
+        
 
         print(f"[+] Vertical report saved: {vertical_path}")
 
     else :
         print("[*] Skipped vertical report (per --no-vertical).")
+
+    # 8) Build attachments list (only existing files)
+    attachments: List[str] = []
+    
+    if wide_path and os.path.isfile(wide_path) :
+        attachments.append(wide_path)
+
+    if vertical_path and os.path.isfile(vertical_path) :
+        attachments.append(vertical_path)
+
+    # 9) Open Outlook draft with recap (never auto-send)
+    if args.no_draft :
+
+        print("[*] Skipped Outlook draft (per --no-draft).")
+        return
+
+    # Subject line: CLI override or default including run date (or start date if provided)
+    run_date = (args.start_date or dt.date.today().isoformat())
+    subject = args.subject or f"Trade Recap — {run_date}"
+
+    try:
+        mail = create_email_item(
+            to_email=None,                 # falls back to EMAIL_DEFAULT_TO
+            cc_email=None,                 # falls back to EMAIL_DEFAULT_CC
+            from_email=None,               # falls back to EMAIL_DEFAULT_FROM if configured
+            subject=subject,
+            dataframe=df,                  # let outlook.py build the recap HTML from DF
+            intro="Quick recap below. Please review.",
+            attachments=attachments,
+            display=True,                  # open compose window
+            #place_html_above_signature=False,
+        )
+        # Optionally save a .msg copy on disk (Drafts folder)
+        save_status = save_email_item(mail)  # uses RECAP_EMAIL_ABS_DIR
+
+        if save_status.get("success"):
+            print(f"[+] Draft saved: {save_status.get('path')}")
+
+        else:
+            print(f"[!] Draft not saved: {save_status.get('message')}")
+            
+    except Exception as e:
+
+        print(f"[!] Could not open Outlook draft: {e}")
+        # Do not exit with error; reports are already saved.
 
 
 if __name__ == "__main__":
