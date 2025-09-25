@@ -5,33 +5,58 @@ import json, ast
 import polars as pl
 
 from collections import deque
-from typing import Any, Dict, Iterable, List, Optional, Tuple
-
-_SANITIZE_RX = re.compile(r"[^0-9A-Za-z_]+")
-DEFAULT_SEP = "."
+from typing import Any, Dict, List, Optional, Tuple, Set
+from src.config import SANITIZE_RX, SEP
 
 
-def sanitize_key (key: str, sep: str = DEFAULT_SEP) -> str :
+# Heuristic: string "looks like" JSON if it begins with '{' or '['.
+JSON_START_RX = re.compile(r"^\s*[\{\[]")
+
+# Match an ID-like last segment: 'id' or '*id', case-insensitive, at end of path
+IDENTIFIER_RX = re.compile(r"(?:^|\.)(?:[A-Za-z0-9_]*id)$", re.IGNORECASE)
+
+
+def sanitize_key (key: str, sep: str = SEP) -> str :
     """
-    
+    Replace `sep` with '_' and strip non-alnum/underscore chars.
+
+    Args:
+        key: Original key/column name.
+        sep: Namespace separator to neutralize (default '.').
+
+    Returns:
+        A sanitized token suitable for filenames / identifiers.
     """
     if sep in key :
         key = key.replace(sep, "_")
 
-    return _SANITIZE_RX.sub("_", key)
+    return SANITIZE_RX.sub("_", key)
 
 
 def py_to_jsonish (s : Optional[str]) -> Optional[str] :
     """
-    
+    Convert a Python- or JSON-like string into normalized JSON (string), or None.
+
+    Strategy:
+    - If `s` already parses as JSON via `json.loads`, return `s` unchanged.
+    - Else try `ast.literal_eval` (for Python dict/list/tuple literals) and dump
+      the result with `json.dumps`.
+    - Return None on blank/'null'/'None' or when parsing fails.
+
+    Args:
+        s: Input string (may be None).
+
+    Returns:
+        JSON string if successful; otherwise None.
     """
     if s is None :
         return None
     
     s = s.strip()
-    if not s or s.lower() == "null" :
+    if not s or s.lower() in {"null", "none"} :
         return None
     
+    # Fast path ; already valid JSON
     try :
         
         json.loads(s)
@@ -40,29 +65,66 @@ def py_to_jsonish (s : Optional[str]) -> Optional[str] :
     except Exception :
         pass
     
-    try :
-        return json.dumps(ast.literal_eval(s))
-    
-    except Exception :
-        return None
+    # Heuristic: only try literal_eval if it *looks* like a literal
+    if JSON_START_RX.search(s) or s.startswith(("'", '"')) or s[:1].isdigit() :
+
+        try :
+
+            py_obj = ast.literal_eval(s)
+            return json.dumps(py_obj)
+
+        except Exception :
+            return None
+
+    return None
 
 
 def looks_jsonish_expr (col : pl.Expr) -> pl.Expr :
     """
-    
+    Build a Polars expression that flags strings that *look* like JSON.
+
+    Heuristics:
+    - Starts with '{' or '[' after stripping spaces, OR
+    - Contains a JSON-style key pattern (e.g., `"key":`)
+
+    Args:
+        col: A Polars Utf8 column as an expression.
+
+    Returns:
+        pl.Expr yielding a boolean Series (nulls -> False).
     """
-    expr = col.strip_chars().str.starts_with("{") | col.strip_chars().str.starts_with("[") | (col.str.contains(":") & (col.str.contains("{") | col.str.contains("[")))
+    s = col.str.strip_chars()
+
+    expr = (s.str.starts_with("{") 
+            | s.str.starts_with("[") 
+            | s.str.contains(r'"\s*[^"]+\s*"\s*:')
+        )
     
-    return expr
+    return expr.fill_null(False)
 
 
 def drop_struct_and_liststruct_columns (df : pl.DataFrame, *, verbose : bool = True) -> pl.DataFrame :
     """
-    
+    Drop columns whose dtype is `Struct` or `List[Struct]`.
+
+    This uses dtype-based selection (robust across Polars versions).
+
+    Args:
+        df: Input DataFrame (may be empty).
+        verbose: If True, log dropped column names.
+
+    Returns:
+        A new DataFrame with selected columns removed (or `df` unchanged).
     """
     if df is None or df.is_empty() :
         return df
     
+    # Select column names by dtype; safer than manual dtype comparisons
+    struct_cols = df.select(pl.col(pl.Struct)).columns
+    list_struct_cols = df.select(pl.col(pl.List(pl.Struct))).columns
+    to_drop = list(dict.fromkeys(struct_cols + list_struct_cols))
+
+    """
     to_drop: List[str] = []
     
     for name, dtype in df.schema.items() :
@@ -72,7 +134,7 @@ def drop_struct_and_liststruct_columns (df : pl.DataFrame, *, verbose : bool = T
         
         elif isinstance(dtype, pl.List) and isinstance(dtype.inner, pl.Struct) :
             to_drop.append(name)
-
+    """
     if verbose and to_drop :
         print(f"[*] Dropping Struct/List[Struct] columns: {to_drop}")
     
