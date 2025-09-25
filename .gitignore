@@ -8,4 +8,5 @@ pyvenv.cfg
 .env
 *.ps1
 data
+*.bat
 Scripts
