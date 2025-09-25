@@ -22,13 +22,14 @@ def save_df_timestamped_excel (
         stamp_fmt: str = "%Y_%m_%dT%H_%M",
         tz: str = "Europe/Luxembourg",
         verbose: bool = True,
+        raw : bool = True
     
     ) -> str :
     """
     
     """
     if base_dir is None :
-        base_dir = RECAP_DATA_ABS_DIR or "./data"
+        base_dir = RECAP_DATA_ABS_DIR or "./data" if base_dir is None else base_dir
     
     os.makedirs(base_dir, exist_ok=True)
 
@@ -39,7 +40,11 @@ def save_df_timestamped_excel (
         now = dt.datetime.now()
 
     stamp = now.strftime(stamp_fmt)
-    out_path = os.path.join(base_dir, f"{base_name}_{stamp}.xlsx")
+
+    if raw :
+        out_path = os.path.join(base_dir, f"{base_name}_{stamp}_raw.xlsx")
+    else :
+        out_path = os.path.join(base_dir, f"{base_name}_{stamp}.xlsx")
 
     df.write_excel(out_path)
 

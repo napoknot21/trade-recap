@@ -19,7 +19,7 @@ from src.recap import build_recap_from_roots, build_email_body_from_df
 # ---------------- Utilities ----------------
 
 def _now_stamp() -> str:
-    return dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    return dt.datetime.now().strftime("%Y-%m-%dT%H_%M")
 
 
 def _ensure_dir(path: str) -> None:

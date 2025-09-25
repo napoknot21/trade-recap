@@ -9,13 +9,13 @@ import datetime as dt
 
 from typing import List, Dict, Any, Tuple
 
-from src.config import RECAP_DATA_ABS_DIR, SEP
+from src.config import RECAP_DATA_ABS_DIR, SEP, RECAP_RAW_DATA_ABS_DIR
 from src.api import load_api_data
 from src.fields import manage_list_type_column_from_df
 from src.flatten import flatten_struct_like_columns_routed
 from src.utils import drop_struct_and_liststruct_columns
 from src.excel import save_df_timestamped_excel, save_vertical_trade_report_by_counterparty_dynamic_levels, save_vertical_split_by_originating_action
-from src.outlook import create_email_item, save_email_item
+from src.outlook import create_email_item, save_email_item, generate_timestamped_name
 
 def parse_args (argv: List[str] | None = None) -> argparse.Namespace:
     """
@@ -139,6 +139,7 @@ def run (argv: List[str] | None = None) -> None :
     args = parse_args(argv)
 
     base_dir = args.base_dir or RECAP_DATA_ABS_DIR or "./data"
+    raw_dir = RECAP_RAW_DATA_ABS_DIR or "./data/raw"
     os.makedirs(base_dir, exist_ok=True)
     
     print(f"[*] Output directory: {base_dir}")
@@ -179,17 +180,19 @@ def run (argv: List[str] | None = None) -> None :
 
     print(df)
 
+    # 6) Export wide report
+    wide_path = save_df_timestamped_excel(df, base_dir=raw_dir, base_name="trade-recap")
+    #print(f"[+] Raw report saved: {wide_path}")
+
     # 5) Drop remaining Struct/List[Struct] to keep Excel wide sheet clean
     df = drop_struct_and_liststruct_columns(df, verbose=True)
 
-    # 6) Export wide report
-    wide_path = save_df_timestamped_excel(df, base_dir=base_dir, base_name="trade-recap")
-    print(f"[+] Wide report saved: {wide_path}")
-
     # 7) Optional vertical report
     if not args.no_vertical :
+        date_name = generate_timestamped_name()
+        full_name = "trade_recap_" + date_name + ".xlsx"
 
-        vertical_path = os.path.join(base_dir, "trade-recap_vertical.xlsx")
+        vertical_path = os.path.join(base_dir, full_name)
         # The report function uses its own palette and layout; no sheet-name param needed here,
         # but you can add it to the function if you want per-CLI control.
         """
@@ -214,7 +217,7 @@ def run (argv: List[str] | None = None) -> None :
     else :
         print("[*] Skipped vertical report (per --no-vertical).")
 
-    # 8) Build attachments list (only existing files)
+    # Build attachments list (only existing files)
     attachments: List[str] = []
     
     if wide_path and os.path.isfile(wide_path) :
