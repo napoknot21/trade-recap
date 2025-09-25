@@ -3,3 +3,5 @@ fastexcel
 dotenv
 xlsxwriter
 pyarrow
+pywin32
+requests

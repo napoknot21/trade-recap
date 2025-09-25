@@ -8,3 +8,4 @@ pyvenv.cfg
 .env
 *.ps1
 data
+Scripts

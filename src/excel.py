@@ -28,7 +28,7 @@ def save_df_timestamped_excel (
     
     """
     if base_dir is None :
-        base_dir = DIRECTORY_DATA_ABS_PATH or "./data"
+        base_dir = RECAP_DATA_ABS_DIR or "./data"
     
     os.makedirs(base_dir, exist_ok=True)
 
