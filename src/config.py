@@ -32,5 +32,8 @@ EMAIL_DEFAULT_BODY_INTRO = os.getenv("EMAIL_DEFAULT_BODY_INTRO")
 
 SANITIZE_RX = re.compile(r"[^0-9A-Za-z_]+")
 
+DEFAULT_EXCLUDED_BOOKS = os.getenv("DEFAULT_EXCLUDED_BOOKS")
+DEFAULT_EXCLUDED_BOOKS_LIST = [b.strip() for b in DEFAULT_EXCLUDED_BOOKS.split(";") if b.strip()]
+
 # column namespace separator
 SEP = "."

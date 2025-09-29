@@ -7,14 +7,14 @@ import argparse
 import polars as pl
 import datetime as dt
 
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
-from src.config import RECAP_DATA_ABS_DIR, SEP, RECAP_RAW_DATA_ABS_DIR
+from src.config import RECAP_DATA_ABS_DIR, SEP, RECAP_RAW_DATA_ABS_DIR, DEFAULT_EXCLUDED_BOOKS_LIST
 from src.api import load_api_data
 from src.fields import manage_list_type_column_from_df
 from src.flatten import flatten_struct_like_columns_routed
 from src.utils import drop_struct_and_liststruct_columns
-from src.excel import save_df_timestamped_excel, save_vertical_trade_report_by_counterparty_dynamic_levels, save_vertical_split_by_originating_action
+from src.excel import save_df_timestamped_excel, save_vertical_split_by_originating_action
 from src.outlook import create_email_item, save_email_item, generate_timestamped_name
 
 def parse_args (argv: List[str] | None = None) -> argparse.Namespace:
@@ -28,23 +28,26 @@ def parse_args (argv: List[str] | None = None) -> argparse.Namespace:
     """
     p = argparse.ArgumentParser(description="Generate wide and vertical trade recap reports from ICE data.")
 
-    p.add_argument("--start-date", default=None, help="YYYY-MM-DD (defaults to ICE helper).")
     p.add_argument(
-        "--exclude", nargs="*", default=["HV_BONDS_EXO", "HV_EXO_EQUITY", "HV_SMART_BETA"],
-        help="Books to exclude (space-separated)."
+        "--start-date", default=None, help="YYYY-MM-DD (defaults to ICE helper)."
     )
+    
     p.add_argument(
-        "--list-routes", default=None,
-        help="Path to a JSON file defining LIST flatten routes (pattern/strategy/list_max/join_delim)."
+        "--exclude", nargs="*", default=DEFAULT_EXCLUDED_BOOKS_LIST, help="Books to exclude (space-separated)."
     )
+
     p.add_argument(
-        "--base-dir", default=None,
-        help="Output directory. Defaults to DIRECTORY_DATA_ABS_PATH env or ./data."
+        "--list-routes", default=None, help="Path to a JSON file defining LIST flatten routes (pattern/strategy/list_max/join_delim)."
     )
+
     p.add_argument(
-        "--no-vertical", action="store_true",
-        help="Skip the vertical (styled) report generation."
+        "--base-dir", default=None, help="Output directory. Defaults to DIRECTORY_DATA_ABS_PATH env or ./data."
     )
+
+    p.add_argument(
+        "--no-vertical", action="store_true", help="Skip the vertical (styled) report generation."
+    )
+
     p.add_argument(
         "--sheet-name", default="Report",
         help="Sheet name for the vertical report (default: Report)."
@@ -132,7 +135,7 @@ def load_routes_from_file (path: str | None) -> List[Dict[str, Any]] :
         return default_routes
     
 
-def run (argv: List[str] | None = None) -> None :
+def run (argv : Optional[List[str]] = None) -> None :
     """
     
     """
@@ -243,7 +246,6 @@ def run (argv: List[str] | None = None) -> None :
             from_email=None,               # falls back to EMAIL_DEFAULT_FROM if configured
             subject=subject,
             dataframe=df,                  # let outlook.py build the recap HTML from DF
-            intro="Quick recap below. Please review.",
             attachments=attachments,
             display=True,                  # open compose window
             #place_html_above_signature=False,

@@ -8,7 +8,7 @@ The project fetch information via a API, and then it manage data to separate New
 
 ## Set up
 
-You need to install dependecies from [`requirements.tx`](./requirements.txt) in order to run the project. There are two ways to do it
+You need to install dependecies from [`requirements.txt`](./requirements.txt) in order to run the project. There are two ways to do it
 
 ### Virtual Environement
 
