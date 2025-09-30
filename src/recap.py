@@ -3,9 +3,28 @@ from __future__ import annotations
 
 import math, html
 import polars as pl
-from typing import Iterable, List, Tuple, Optional, Any, Mapping
+from typing import Iterable, List, Tuple, Optional, Any, Mapping, Callable
 from datetime import date, datetime
 
+# ----------------------- Schema helpers -----------------------
+
+def _is_struct_like(dtype: pl.DataType) -> bool:
+    # True for Struct or List[Struct] (including nested List[List[Struct]], etc.)
+    if dtype == pl.Struct:
+        return True
+    if isinstance(dtype, pl.List):
+        inner = dtype.inner
+        # Walk down through nested lists
+        while isinstance(inner, pl.List):
+            inner = inner.inner
+        return inner == pl.Struct
+    return False
+
+def drop_struct_like_cols(df: pl.DataFrame) -> pl.DataFrame:
+    if df is None or df.is_empty():
+        return df
+    keep = [c for c, t in df.schema.items() if not _is_struct_like(t)]
+    return df.select(keep)
 
 # ----------------------- Column helpers -----------------------
 
@@ -32,7 +51,8 @@ def build_recap_from_roots(
         id_cols: Tuple[str, str, str] = ("counterparty", "tradeId", "tradeLegId"),
         always_include: Iterable[str] = ("originatingAction",),
         sort_by: Iterable[str] = ("counterparty", "tradeId", "tradeLegId"),
-        cast_ids_to_text: bool = True
+        cast_ids_to_text: bool = True,
+        drop_structs: bool = True,
 
     ) -> pl.DataFrame:
     """
@@ -43,6 +63,10 @@ def build_recap_from_roots(
     """
     if df is None or df.is_empty():
         return pl.DataFrame()
+
+    # drop Struct-like cols upfront
+    if drop_structs:
+        df = drop_struct_like_cols(df)
 
     cols = df.columns
     cols_set = set(cols)
@@ -134,13 +158,20 @@ def _default_fmt(v: Any) -> str:
     return str(v)
 
 def df_to_html_table(
-    df: pl.DataFrame,
-    *,
-    max_rows: int = 1000,
-    caption: str | None = None,
-    zebra: bool = False,
-    column_formatters: Mapping[str, callable] | None = None,
-) -> str:
+        
+        df: pl.DataFrame,
+        *,
+        max_rows: int = 1000,
+        caption: str | None = None,
+        zebra: bool = False,
+        column_formatters: Optional[Mapping[str, callable]] = None,
+        
+        autosize: bool = True,
+        min_col_ch: int = 6,
+        max_col_ch: int = 60,
+        truncate_text_at: int | None = None,
+
+    ) -> str:
     """
     Convert a Polars DataFrame into an HTML <table> string.
 
@@ -155,6 +186,7 @@ def df_to_html_table(
 
     headers = df.columns
     data = df.head(max_rows).iter_rows()  # tuple rows (fast)
+    rows = list(df.head(max_rows).iter_rows())
     schema = df.schema
     num_idx = {i for i, h in enumerate(headers) if schema[h] in _NUM_TYPES}
 
@@ -165,8 +197,30 @@ def df_to_html_table(
             if k in fmt_map and callable(fn):
                 fmt_map[k] = fn
 
+    colgroup_html = ""
+    if autosize:
+        widths_ch = _estimate_col_widths_in_ch(
+            df,
+            headers=headers,
+            schema=schema,
+            data_rows=rows,
+            column_formatters=fmt_map,
+            min_ch=min_col_ch,
+            max_ch=max_col_ch,
+        )
+        # Use table-layout:auto and prefer width hints via colgroup
+        colgroup = ['<colgroup>']
+        for w in widths_ch:
+            colgroup.append(f'<col style="width:{w}ch;">')
+        colgroup.append('</colgroup>')
+        colgroup_html = "".join(colgroup)
+
     parts: List[str] = []
     parts.append('<table role="presentation" style="' + _TABLE_STYLE + '">')
+
+    # Insert colgroup right after <table> for width hints
+    if colgroup_html:
+        parts.append(colgroup_html)
 
     if caption:
         parts.append(f"<caption>{html.escape(caption)}</caption>")
@@ -228,3 +282,43 @@ def build_email_body_from_df(
         column_formatters=column_formatters,
     )
     return f"<p>{html.escape(intro_text)}</p>{table_html}"
+
+
+
+def _estimate_col_widths_in_ch(
+    df: pl.DataFrame,
+    *,
+    headers: List[str],
+    schema: dict[str, pl.DataType],
+    data_rows: Iterable[tuple],
+    column_formatters: Mapping[str, Callable[[Any], str]] | None,
+    min_ch: int = 6,
+    max_ch: int = 60,
+) -> List[int]:
+    """
+    Very simple heuristic:
+      width = clamp( max(len(header), max(len(formatted cell) for sampled rows)) )
+    """
+    # Prepare per-column formatters
+    fmt_map: dict[str, Callable[[Any], str]] = {c: _default_fmt for c in headers}
+    if column_formatters:
+        for k, fn in column_formatters.items():
+            if k in fmt_map and callable(fn):
+                fmt_map[k] = fn
+
+    # Initialize with header lengths
+    max_lens = [len(h) for h in headers]
+
+    # Sample rows to refine widths
+    for row in data_rows:
+        for i, v in enumerate(row):
+            col = headers[i]
+            txt = fmt_map[col](v)
+            # Use the *visible* length before HTML escaping; good enough for ch units.
+            L = len("" if txt is None else str(txt))
+            if L > max_lens[i]:
+                max_lens[i] = L
+
+    # Clamp into a reasonable range to avoid wild widths
+    widths = [max(min_ch, min(max_ch, L)) for L in max_lens]
+    return widths

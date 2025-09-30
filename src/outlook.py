@@ -70,14 +70,16 @@ def _apply_from_account(mail, outlook_app, from_email: Optional[str]) -> None:
 
 # ------------- DF -> HTML -------------------
 
-def generate_html_template_body(
-    dataframe: pl.DataFrame,
-    *,
-    intro: Optional[str] = None,
-    caption: str = "Trades Recap",
-    max_rows: int = 2000,
-    zebra: bool = True,
-) -> str:
+def generate_html_template_body (
+        
+        dataframe: pl.DataFrame,
+        *,
+        intro: Optional[str] = None,
+        caption: str = "Trades Recap",
+        max_rows: int = 2000,
+        zebra: bool = True,
+    
+    ) -> str:
     """
     Build the HTML block (intro paragraph + table) from a Polars DF.
     """
