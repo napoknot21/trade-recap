@@ -124,17 +124,6 @@ def drop_struct_and_liststruct_columns (df : pl.DataFrame, *, verbose : bool = T
     list_struct_cols = df.select(pl.col(pl.List(pl.Struct))).columns
     to_drop = list(dict.fromkeys(struct_cols + list_struct_cols))
 
-    """
-    to_drop: List[str] = []
-    
-    for name, dtype in df.schema.items() :
-
-        if isinstance(dtype, pl.Struct) :
-            to_drop.append(name)
-        
-        elif isinstance(dtype, pl.List) and isinstance(dtype.inner, pl.Struct) :
-            to_drop.append(name)
-    """
     if verbose and to_drop :
         print(f"[*] Dropping Struct/List[Struct] columns: {to_drop}")
     
