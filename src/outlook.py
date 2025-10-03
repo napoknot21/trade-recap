@@ -7,6 +7,7 @@ import datetime as dt
 import win32com.client as win32
 import pythoncom as pycom
 
+from html import unescape
 from typing import Dict, List, Optional, Sequence, Any
 
 from src.config import (
@@ -85,13 +86,19 @@ def generate_html_template_body (
     """
     intro = EMAIL_DEFAULT_BODY_INTRO if intro is None else intro
     recap_df = build_recap_from_roots(dataframe)
+    
     html_block = build_email_body_from_df(
+    
         recap_df,
         intro_text=intro,
         caption=caption,
         max_rows=max_rows,
         zebra=zebra,
+    
     )
+    
+    html_block = unescape(html_block)
+    
     return html_block
 
 

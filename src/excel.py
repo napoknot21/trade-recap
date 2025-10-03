@@ -914,6 +914,18 @@ def save_vertical_split_by_originating_action(
         df_trading = pl.DataFrame(schema=df.schema)  # empty but same schema
         df_lifecycle = df
 
+    # --- Drop empty columns (all-null) ---
+    def drop_all_nulls(d: pl.DataFrame) -> pl.DataFrame:
+        if d.is_empty():
+            return d
+        non_empty_cols = [
+            c for c in d.columns if d[c].null_count() < d.height
+        ]
+        return d.select(non_empty_cols)
+
+    df_trading = drop_all_nulls(df_trading)
+    df_lifecycle = drop_all_nulls(df_lifecycle)
+
     wb = xlsxwriter.Workbook(out_path)
     try:
         formats = create_formats(wb)

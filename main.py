@@ -223,8 +223,10 @@ def run (argv : Optional[List[str]] = None) -> None :
     # Build attachments list (only existing files)
     attachments: List[str] = []
     
+    """
     if wide_path and os.path.isfile(wide_path) :
         attachments.append(wide_path)
+    """
 
     if vertical_path and os.path.isfile(vertical_path) :
         attachments.append(vertical_path)

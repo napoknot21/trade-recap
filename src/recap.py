@@ -133,16 +133,24 @@ _TABLE_STYLE = (
     "font-size:12px;"
     "border:1px solid #D1D5DB;"
     "table-layout:auto;"
-    "width:auto;"
+    "width:100%;"
+    "mso-table-lspace:0pt;mso-table-rspace:0pt;"
 )
+
 _TH_STYLE = (
     "border:1px solid #D1D5DB;"
-    "padding:6px 8px;"
+    "padding:8px 10px;"
     "background:#F3F4F6;"
     "text-align:left;"
     "white-space:nowrap;"
 )
-_TD_STYLE = "border:1px solid #D1D5DB;padding:6px 8px;vertical-align:top;"
+
+_TD_STYLE = (
+    "border:1px solid #D1D5DB;"
+    "padding:8px 10px;"
+    "vertical-align:top;"
+    "word-break:break-word;"
+)
 _TD_NUM_STYLE = _TD_STYLE + "text-align:right;"
 
 def _default_fmt(v: Any) -> str:
@@ -170,6 +178,7 @@ def df_to_html_table(
         min_col_ch: int = 6,
         max_col_ch: int = 60,
         truncate_text_at: int | None = None,
+        min_table_px: Optional[int] = 1200,     # <- new
 
     ) -> str:
     """
@@ -214,6 +223,10 @@ def df_to_html_table(
             colgroup.append(f'<col style="width:{w}ch;">')
         colgroup.append('</colgroup>')
         colgroup_html = "".join(colgroup)
+    
+    table_style = _TABLE_STYLE
+    if min_table_px:
+        table_style = table_style + f"min-width:{min_table_px}px;"  # Outlook-friendly
 
     parts: List[str] = []
     parts.append('<table role="presentation" style="' + _TABLE_STYLE + '">')
@@ -259,14 +272,16 @@ def df_to_html_table(
 # ----------------------- High-level body builder -----------------------
 
 def build_email_body_from_df(
-    df: pl.DataFrame,
-    *,
-    intro_text: str = "Please find a quick recap below. Full file attached.",
-    caption: str | None = None,
-    max_rows: int = 1000,
-    zebra: bool = False,
-    column_formatters: Mapping[str, callable] | None = None,
-) -> str:
+        
+        df: pl.DataFrame,
+        *,
+        intro_text: str = "Please find a quick recap below. Full file attached.",
+        caption: str | None = None,
+        max_rows: int = 1000,
+        zebra: bool = False,
+        column_formatters : Optional[Mapping[str, callable]] = None,
+
+    ) -> str:
     """
     Build a full HTML fragment (paragraph + table) from a Polars DataFrame.
     This returns a string ready to be embedded into an email body (in outlook.py)
@@ -281,7 +296,7 @@ def build_email_body_from_df(
         zebra=zebra,
         column_formatters=column_formatters,
     )
-    return f"<p>{html.escape(intro_text)}</p>{table_html}"
+    return f"{(intro_text)}<p>{table_html}<p>"
 
 
 
