@@ -10,6 +10,7 @@ import datetime as dt
 from typing import List, Dict, Any, Tuple, Optional
 
 from src.config import RECAP_DATA_ABS_DIR, SEP, RECAP_RAW_DATA_ABS_DIR, DEFAULT_EXCLUDED_BOOKS_LIST
+from src.config import *
 from src.api import load_api_data
 from src.fields import manage_list_type_column_from_df
 from src.flatten import flatten_struct_like_columns_routed
@@ -241,10 +242,12 @@ def run (argv : Optional[List[str]] = None) -> None :
     run_date = (args.start_date or dt.date.today().isoformat())
     subject = args.subject or f"Trade Recap — {run_date}"
 
-    try:
-        mail = create_email_item(
-            to_email=None,                 # falls back to EMAIL_DEFAULT_TO
-            cc_email=None,                 # falls back to EMAIL_DEFAULT_CC
+    try :
+
+        mail_1 = create_email_item(
+            
+            to_email=EMAIL_DEFAULT_TO,                 # falls back to EMAIL_DEFAULT_TO
+            cc_email=EMAIL_DEFAULT_CC,                 # falls back to EMAIL_DEFAULT_CC
             from_email=None,               # falls back to EMAIL_DEFAULT_FROM if configured
             subject=subject,
             dataframe=df,                  # let outlook.py build the recap HTML from DF
@@ -252,14 +255,30 @@ def run (argv : Optional[List[str]] = None) -> None :
             display=True,                  # open compose window
             #place_html_above_signature=False,
         )
+
         # Optionally save a .msg copy on disk (Drafts folder)
-        save_status = save_email_item(mail)  # uses RECAP_EMAIL_ABS_DIR
+        save_status_1 = save_email_item(mail_1)  # uses RECAP_EMAIL_ABS_DIR
 
-        if save_status.get("success"):
-            print(f"[+] Draft saved: {save_status.get('path')}")
+        mail_2 = create_email_item(
+            
+            to_email=EMAIL_ALTERNATIVE_TO,                 # falls back to EMAIL_ALTERNATIVE_TO
+            cc_email=EMAIL_ALTERNATIVE_CC,                 # falls back to EMAIL_ALTERNATIVE_CC
+            from_email=EMAIL_ALTERNATIVE_FROM,               # falls back to EMAIL_DEFAULT_FROM if configured
+            subject=subject,
+            intro=EMAIL_ALTERNATIVE_BODY_INTRO,
+            dataframe=df,                  # let outlook.py build the recap HTML from DF
+            attachments=attachments,
+            display=True,                  # open compose window
+            #place_html_above_signature=False,
+        )
 
-        else:
-            print(f"[!] Draft not saved: {save_status.get('message')}")
+        save_status_2 = save_email_item(mail_2)
+
+        if save_status_1.get("success") and save_status_2.get("success") :
+            print(f"[+] Drafts saved: {save_status_1.get('path')}")
+
+        else :
+            print(f"[!] Draft not saved: {save_status_1.get('message')}")
             
     except Exception as e:
 

@@ -85,7 +85,7 @@ def generate_html_template_body (
     Build the HTML block (intro paragraph + table) from a Polars DF.
     """
     intro = EMAIL_DEFAULT_BODY_INTRO if intro is None else intro
-    recap_df = build_recap_from_roots(dataframe)
+    recap_df = build_recap_from_roots(dataframe, roots=None)
     
     html_block = build_email_body_from_df(
     
@@ -109,19 +109,21 @@ def generate_html_from_df(dataframe: pl.DataFrame):
 # ------------- Outlook: create/save/send -------------------
 
 def create_email_item(
-    *,
-    to_email: Optional[List[str]] = None,
-    cc_email: Optional[List[str]] = None,
-    from_email: Optional[str] = None,
-    subject: str = "",
-    intro: Optional[str] = None,
-    body: Optional[str] = None,
-    dataframe: Optional[pl.DataFrame] = None,
-    display: bool = True,
-    attachments: Optional[List[str]] = None,
-    use_signature: bool = True,           # <<< preserve default signature
-    place_html_above_signature: bool = False,
-) -> Any:
+        
+        *,
+        to_email: Optional[List[str]] = None,
+        cc_email: Optional[List[str]] = None,
+        from_email: Optional[str] = None,
+        subject: str = "",
+        intro: Optional[str] = None,
+        body: Optional[str] = None,
+        dataframe: Optional[pl.DataFrame] = None,
+        display: bool = True,
+        attachments: Optional[List[str]] = None,
+        use_signature: bool = True,
+        place_html_above_signature: bool = False,
+
+    ) -> Any :
     """
     Create (and optionally display) an Outlook draft. Never auto-sends.
     If `body` is None and `dataframe` is provided, an HTML recap is generated.
@@ -183,10 +185,12 @@ def create_email_item(
 
 
 def save_email_item(
-    email_item: Any,
-    *,
-    abs_path_directory: Optional[str] = None
-) -> Optional[Dict]:
+        
+        email_item: Any,
+        *,
+        abs_path_directory: Optional[str] = None
+    
+    ) -> Optional[Dict]:
     """
     Saves an email item to .msg and returns a status dict.
     """
@@ -201,13 +205,14 @@ def save_email_item(
         "path": None
     }
 
-    try:
+    try :
         # 3 = olMSGUnicode
         email_item.SaveAs(save_path, 3)
         status["success"] = True
         status["message"] = "Email saved successfully"
         status["path"] = save_path
-    except Exception as e:
+    
+    except Exception as e :
         status["message"] = f"Failed to save email: {str(e)}"
 
     return status
@@ -217,14 +222,17 @@ def send_email(email_item: Any) -> bool:
     """
     Sends the given Outlook mail item immediately via Outlook.
     """
-    try:
+    try :
+        
         email_item.Send()
         return True
-    except Exception as e:
+    
+    except Exception as e :
+
         print(f"[-] Failed to send email: {e}")
         return False
 
 
-def generate_timestamped_name() -> str:
+def generate_timestamped_name() -> str :
     # Keep for backwards-compat; reuse single implementation
     return _now_stamp()
