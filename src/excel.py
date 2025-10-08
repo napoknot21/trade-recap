@@ -49,7 +49,7 @@ def save_df_timestamped_excel (
     df.write_excel(out_path)
 
     if verbose:
-        print(f"[+] Wrote Excel to: {out_path}")
+        print(f"[+] Wrote Excel to: {out_path}\n")
     
     return out_path
 

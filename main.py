@@ -152,7 +152,7 @@ def run (argv : Optional[List[str]] = None) -> None :
     df = load_api_data(start_date=args.start_date, excluded_books=args.exclude)
     
     if df.is_empty() :
-        print("[!] No data returned from API. Exiting.")
+        print("\n[!] No data returned from API. Exiting...\n")
         return
 
     # Wide columns for fields/customFields
@@ -182,7 +182,7 @@ def run (argv : Optional[List[str]] = None) -> None :
         ],
     )
 
-    print(df)
+    print(f"{df}\n")
 
     # 6) Export wide report
     wide_path = save_df_timestamped_excel(df, base_dir=raw_dir, base_name="trade-recap")
@@ -216,7 +216,7 @@ def run (argv : Optional[List[str]] = None) -> None :
         )
         
 
-        print(f"[+] Vertical report saved: {vertical_path}")
+        print(f"[+] Vertical report saved: {vertical_path}\n")
 
     else :
         print("[*] Skipped vertical report (per --no-vertical).")

@@ -66,7 +66,7 @@ def load_api_data (
     t0 = time.time()
     tm = create_trade_manager()
 
-    print("\n[*] Getting Trades...")
+    print("\n[*] Getting Trades...\n")
     
     # Collect candidate books (HV + WR) and filter
     all_books_hv = tm.get_all_existing_hv_portfolios() or []
@@ -84,18 +84,17 @@ def load_api_data (
         # Early return to avoid unnecessary API calls
         return pl.DataFrame()
     
-    print("\n[+] Books available:\n", all_books)
-
-    print("\n[*] Generating dates to fetch:\n")
+    print(f"\n[*] Books available : \n\n{all_books}\n")
 
     dates : List[str] = tm.generate_dates(start_date, end_date, format=date_format) or []
+    print(f"[*] Generating dates to fetch: {dates}\n")
     
     if not dates :
 
-        print("[-] No dates available. Returning empty DataFrame.")
+        print("[-] No dates available. Returning empty DataFrame.\n")
         return pl.DataFrame()
     
-    print("\n[*] Fetching trade legs...\n")
+    print("[*] Fetching trade legs...\n")
 
     # Fetch raw trade legs
     data_raw : Dict = tm.get_trades_from_books_by_date(all_books, dates) or {}
@@ -134,8 +133,8 @@ def load_api_data (
     # strict=False allows missing keys across dicts
     df = pl.from_dicts(trade_legs, strict=False)
 
-    print(f"[trade-recap] load_api_data done in {time.time() - t0:.2f}s "
-          f"(books={len(all_books)}, dates={len(dates)}, legs={len(trade_ids)})")
+    print(f"\n[+] [trade-recap] load_api_data done in {time.time() - t0:.2f}s "
+          f"(books={len(all_books)}, dates={len(dates)}, legs={len(trade_ids)})\n")
 
     return df
 
